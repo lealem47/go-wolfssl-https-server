@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"sync"
 	"time"
+	"runtime"
 )
 
 const defaultPort = "8443"
@@ -21,6 +22,8 @@ type wolfSSLListener struct {
 	listener net.Listener
 	ctx      *wolfSSL.WOLFSSL_CTX
 }
+
+var file   *os.File
 
 // Accept waits for and returns the next connection to the listener.
 func (cl *wolfSSLListener) Accept() (net.Conn, error) {
@@ -36,11 +39,16 @@ func (cl *wolfSSLListener) Accept() (net.Conn, error) {
 		os.Exit(1)
 	}
 
-	file, err := conn.(*net.TCPConn).File()
+	file, err = conn.(*net.TCPConn).File()
 	if err != nil {
 		panic(err)
 	}
-	fd := file.Fd()
+
+        var p runtime.Pinner
+        p.Pin(file)
+        defer p.Unpin()
+
+        fd := file.Fd()
 	wolfSSL.WolfSSL_set_fd(ssl, int(fd))
 
 	ret := wolfSSL.WolfSSL_accept(ssl)
@@ -78,6 +86,10 @@ type wolfSSLConn struct {
 func (w *wolfSSLConn) Read(b []byte) (int, error) {
 	log.Infof("Calling read: %d", len(b))
 
+        var p runtime.Pinner
+        p.Pin(file)
+        defer p.Unpin()
+
 	ret := wolfSSL.WolfSSL_read(w.ssl, b, uintptr(len(b)))
 	if ret < 0 {
 		errCode := wolfSSL.WolfSSL_get_error(w.ssl, int(ret))
@@ -92,6 +104,10 @@ func (w *wolfSSLConn) Write(b []byte) (int, error) {
 	log.Infof("Calling write: %d", len(b))
 
 	sz := uintptr(len(b))
+
+        var p runtime.Pinner
+        p.Pin(file)
+        defer p.Unpin()
 
 	ret := wolfSSL.WolfSSL_write(w.ssl, b, sz)
 	if ret < 0 {
